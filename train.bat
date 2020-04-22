@@ -1,0 +1,1 @@
+python train.py -c 2 -p coco --batch_size 1 --lr 1e-5 --num_epochs 10  --load_weights D:/GitHub/EfficientDet-Pytorch/weights/efficientdet-d4.pth  --head_only True

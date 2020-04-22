@@ -13,6 +13,45 @@ import uuid
 
 from utils.sync_batchnorm import SynchronizedBatchNorm2d
 
+def py_cpu_nms(dets0,scores0, thresh):
+    """Pure Python NMS baseline."""
+    dets =  dets0.numpy()
+    x1 = dets[:, 0]
+    y1 = dets[:, 1]
+    x2 = dets[:, 2]
+    y2 = dets[:, 3]
+    #scores = dets[:, 4]
+    scores= scores0.numpy()
+    print(scores.shape  )
+    areas = (x2 - x1 + 1) * (y2 - y1 + 1)
+    #按照从小到大排序后返回下标，然后顺序取反，即从大到小对应的下标
+    order = scores.argsort()[::-1] 
+
+    keep = []
+    while order.size > 0:
+        i = order[0]
+        keep.append(i)
+        #求交叉面积intersection采用了这个非常巧妙的方法，自己画一下思考一下
+        xx1 = np.maximum(x1[i], x1[order[1:]])
+        yy1 = np.maximum(y1[i], y1[order[1:]])
+        xx2 = np.minimum(x2[i], x2[order[1:]])
+        yy2 = np.minimum(y2[i], y2[order[1:]])
+
+        w = np.maximum(0.0, xx2 - xx1 + 1) #计算w
+        h = np.maximum(0.0, yy2 - yy1 + 1) #计算h
+        inter = w * h       #交叉面积
+        #A交B/A并B
+        ovr = inter / (areas[i] + areas[order[1:]] - inter)
+        """
+        保留重叠面积小于threshold的
+        np.where的返回值是tuple
+        第一个维度是x的list，第二个维度是y的list
+        这里因为输入是1维，因此就取0就好
+        """
+        inds = np.where(ovr <= thresh)[0]
+        order = order[inds + 1]
+    return keep
+ 
 
 def invert_affine(metas: Union[float, list, tuple], preds):
     for i in range(len(preds)):
@@ -64,7 +103,9 @@ def aspectaware_resize_padding(image, width, height, interpolation=None, means=N
 
 def preprocess(*image_path, max_size=512, mean=(0.406, 0.456, 0.485), std=(0.225, 0.224, 0.229)):
     ori_imgs = [cv2.imread(img_path) for img_path in image_path]
-    normalized_imgs = [(img / 255 - mean) / std for img in ori_imgs]
+    #normalized_imgs = []
+    #print(image_path)
+    normalized_imgs = [((img / 255 - mean) / std) for img in ori_imgs]
     imgs_meta = [aspectaware_resize_padding(img[..., ::-1], max_size, max_size,
                                             means=None) for img in normalized_imgs]
     framed_imgs = [img_meta[0] for img_meta in imgs_meta]
@@ -90,8 +131,12 @@ def postprocess(x, anchors, regression, classification, regressBoxes, clipBoxes,
         classification_per = classification[i, scores_over_thresh[i, :], ...].permute(1, 0)
         transformed_anchors_per = transformed_anchors[i, scores_over_thresh[i, :], ...]
         scores_per = scores[i, scores_over_thresh[i, :], ...]
-        anchors_nms_idx = nms(transformed_anchors_per, scores_per[:, 0], iou_threshold=iou_threshold)
+        #anchors_nms_idx = nms(transformed_anchors_per, scores_per[:, 0], iou_threshold=iou_threshold)
 
+        anchors_nms_idx1 = py_cpu_nms(transformed_anchors_per, scores_per[:, 0], thresh=iou_threshold)
+        #print(transformed_anchors_per.shape)
+        #anchors_nms_idx = len(transformed_anchors_per)
+        anchors_nms_idx = np.array(anchors_nms_idx1)
         if anchors_nms_idx.shape[0] != 0:
             scores_, classes_ = classification_per[:, anchors_nms_idx].max(dim=0)
             boxes_ = transformed_anchors_per[anchors_nms_idx, :]
